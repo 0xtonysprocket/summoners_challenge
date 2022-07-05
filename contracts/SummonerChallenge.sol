@@ -12,7 +12,7 @@ contract SummonerChallenge is VRFConsumerBaseV2, Ownable {
     event ChallengerTypeDominant();
     event SummonerTypeDominant();
     event SummonerWins(uint8 summonerRoll, uint8 adjustedChallengerRoll, string summonerSays);
-    event ChallengerWins(uint8 summonerRoll, uint8 adjustedChallengerRoll);
+    event ChallengerWins(uint8 summonerRoll, uint8 adjustedChallengerRoll, uint houseCut, uint winnings);
 
     struct Challenge {
         address challenger;
@@ -42,6 +42,7 @@ contract SummonerChallenge is VRFConsumerBaseV2, Ownable {
 
     // rake for the zkasino
     // interpreted as a decimal (1 is .001, 2 is .002, ... 500 is .5, ... 1000 is 1)
+    uint16 RAKE_DENOMINATOR = 1000;
     uint16 rake;
 
     constructor(uint64 subscriptionId, address vrfCoordinator, address ZKasinoToken, uint16 _rake) VRFConsumerBaseV2(vrfCoordinator) {
@@ -65,6 +66,7 @@ contract SummonerChallenge is VRFConsumerBaseV2, Ownable {
         numWords
        );
 
+        ChallengerToIDs[msg.sender].push(VRFRequestId);
         IDToChallenger[VRFRequestId] = msg.sender;
         IDToMonsterTypeSelection[VRFRequestId] = monsterType;
         IDToWager[VRFRequestId] = bet_amount;
@@ -78,10 +80,15 @@ contract SummonerChallenge is VRFConsumerBaseV2, Ownable {
     }
 
     function fullfilRandomWords(uint256 VRFRequestId, uint256[] memory randomWords) internal override {
-        uint8 summonersType = (randomWords[0] % 4) + 1;
+        address challenger = IDToChallenger[VRFRequestId];
         uint8 challengerType = IDToMonsterTypeSelection[VRFRequestId];
         uint256 wager = IDToWager[VRFRequestId];
         int8 monsterTypeAdjustment = 0;
+
+        //randomness
+        uint8 summonersType = (randomWords[0] % 4) + 1;
+        uint8 challengerRoll = (randomWords[1] % 100) + 1;
+        uint8 summonerRoll = (randomWords[2] % 101) + 1; //Summoner has slightly better odds
 
         emit SummonerTypeSelected(VRFRequestId, summonersType);
 
@@ -100,14 +107,11 @@ contract SummonerChallenge is VRFConsumerBaseV2, Ownable {
             emit ChallengerTypeDominant();
         }
 
-        // roll for Challenger
-        uint8 challengerRoll = (randomWords[1] % 100) + 1;
+        // adjust roll for Challenger based on types
         uint8 adjustedChallengerRoll = (int8(challengerRoll) + monsterTypeAdjustment);
 
-        // roll for Summoner
-        uint8 summonerRoll = (randomWords[2] % 101) + 1;
 
-        if (summonerRoll >= adjustedChallengerRoll) {
+        if (summonerRoll >= adjustedChallengerRoll) { //summoner wins in a tie
             
             //summoner wins
             IDToChallengeResult[VRFRequestId] = false;
@@ -117,11 +121,15 @@ contract SummonerChallenge is VRFConsumerBaseV2, Ownable {
 
             //challenger wins
             IDToChallengeResult[VRFRequestId] = true;
-            emit ChallengerWins(summonerRoll, adjustedChallengerRoll);
 
             //calculate rake
+            uint houseCut = (wager * rake) / RAKE_DENOMINATOR;
+
+            //calculate winnings
+            uint winnings = (wager * 2) - houseCut;
+
+            ZKT.transfer(challenger, winnings);
+            emit ChallengerWins(summonerRoll, adjustedChallengerRoll, houseCut, winnings);
         }
     }
-
-
 }
