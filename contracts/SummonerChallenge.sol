@@ -43,7 +43,10 @@ contract SummonerChallenge is VRFConsumerBaseV2, Ownable {
     // rake for the zkasino
     // interpreted as a decimal (1 is .001, 2 is .002, ... 500 is .5, ... 1000 is 1)
     uint16 RAKE_DENOMINATOR = 1000;
-    uint16 rake;
+    uint16 public rake;
+
+    // amount of ZKasino tokens the house has earned since last transferring winnings
+    uint256 public houseEarningsSinceLastTransfer;
 
     constructor(uint64 subscriptionId, address vrfCoordinator, address ZKasinoToken, uint16 _rake) VRFConsumerBaseV2(vrfCoordinator) {
         require(_rake <= 1000, "invalid rake");
@@ -51,6 +54,11 @@ contract SummonerChallenge is VRFConsumerBaseV2, Ownable {
         IERC20 ZKT = IERC20(ZKasinoToken);
         rake = _rake;
     }
+
+
+    //////////////////
+    //// CORE LOGIC
+    //////////////////
 
     function ChallengeSummoner(uint8 calldata monsterType, uint256 bet_amount) external returns(uint256 VRFRequestId) {
         require(monsterType <= 4, "invalid monster type");
@@ -115,6 +123,9 @@ contract SummonerChallenge is VRFConsumerBaseV2, Ownable {
             
             //summoner wins
             IDToChallengeResult[VRFRequestId] = false;
+
+            houseEarningsSinceLastTransfer += wager;
+
             emit SummonerWins(summonerRoll, adjustedChallengerRoll, "Better Luck Next Time");
         }
         else {
@@ -124,6 +135,7 @@ contract SummonerChallenge is VRFConsumerBaseV2, Ownable {
 
             //calculate rake
             uint houseCut = (wager * rake) / RAKE_DENOMINATOR;
+            houseEarningsSinceLastTransfer += houseCut;
 
             //calculate winnings
             uint winnings = (wager * 2) - houseCut;
@@ -131,5 +143,37 @@ contract SummonerChallenge is VRFConsumerBaseV2, Ownable {
             ZKT.transfer(challenger, winnings);
             emit ChallengerWins(summonerRoll, adjustedChallengerRoll, houseCut, winnings);
         }
+    }
+
+    //////////////////
+    //// VIEW METHODS
+    //////////////////
+
+    function getChallenges() public view returns (uint256[] challenges) {
+        uint256[] _challenges = ChallengerToIDs[msg.sender];
+
+        return (_challenges);
+    }
+
+    function getChallengeFromID(uint256 VRFRequestID) public view returns (Challenge challenge) {
+        
+        Challenge _challenge = Challenge(
+            IDToChallenger[VRFRequestID],
+            IDToWager[VRFRequestID],
+            IDToMonsterTypeSelection[VRFRequestID],
+            IDToChallengeResult[VRFRequestID]
+        );
+
+        return (_challenge);
+    }
+
+    //////////////////
+    //// ADMIN METHODS
+    //////////////////
+
+    function collectHouseWinnings(address recipient) external onlyOwner() returns (bool success) {
+        ZKT.transfer(recipient, houseEarningsSinceLastTransfer);
+
+        houseEarningsSinceLastTransfer = 0;
     }
 }
